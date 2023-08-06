@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #include <netinet/ip.h>
 
+#define k_max_msg 4096
 
 static void msg(const char *msg) {
     fprintf(stderr, "%s\n", msg);
@@ -16,15 +17,23 @@ static void msg(const char *msg) {
 
 static void die(const char *msg) {
     int err = errno;
-    fprintf(stderr, "[%d] %s\n", err, msg);
+    char err_msg[256];
+    if(strerror_r(err, err_msg, sizeof(err_msg)) == 0) {
+        fprintf(stderr, "Error %d: %s - %s\n", err, err_msg, msg);
+    } else {
+        fprintf(stderr, "Error %d: %s\n", err, msg);
+    }
     abort();
 }
 
-const size_t k_max_msg = 4096;
-
 static int32_t read_full(int fd, char *buf, size_t n) {
+    if (buf == NULL) {
+        return -1;
+    }
+
+    ssize_t rv;
     while (n > 0) {
-        ssize_t rv = read(fd, buf, n);
+        rv = read(fd, buf, n);
         if (rv <= 0) {
             return -1;  // error, or unexpected EOF
         }
@@ -36,8 +45,13 @@ static int32_t read_full(int fd, char *buf, size_t n) {
 }
 
 static int32_t write_all(int fd, const char *buf, size_t n) {
+    if (buf == NULL) {
+        return -1;
+    }
+
+    ssize_t rv;
     while (n > 0) {
-        ssize_t rv = write(fd, buf, n);
+        rv = write(fd, buf, n);
         if (rv <= 0) {
             return -1;  // error
         }
@@ -47,6 +61,7 @@ static int32_t write_all(int fd, const char *buf, size_t n) {
     }
     return 0;
 }
+
 
 static int32_t one_request(int connfd) {
     // 4 bytes header
@@ -65,7 +80,7 @@ static int32_t one_request(int connfd) {
     uint32_t len = 0;
     memcpy(&len, rbuf, 4);  // assume little endian
     if (len > k_max_msg) {
-        msg("too long");
+        msg("Message length exceeds limit");
         return -1;
     }
 
@@ -84,6 +99,7 @@ static int32_t one_request(int connfd) {
     const char reply[] = "world";
     char wbuf[4 + sizeof(reply)];
     len = (uint32_t)strlen(reply);
+    // uint32_t nlen = htonl(len);
     memcpy(wbuf, &len, 4);
     memcpy(&wbuf[4], reply, len);
     return write_all(connfd, wbuf, 4 + len);

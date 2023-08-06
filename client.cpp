@@ -21,8 +21,13 @@ static void die(const char *msg) {
 }
 
 static int32_t read_full(int fd, char *buf, size_t n) {
+    if (buf == NULL) {
+        return -1;
+    }
+
+    ssize_t rv;
     while (n > 0) {
-        ssize_t rv = read(fd, buf, n);
+        rv = read(fd, buf, n);
         if (rv <= 0) {
             return -1;  // error, or unexpected EOF
         }
@@ -34,8 +39,13 @@ static int32_t read_full(int fd, char *buf, size_t n) {
 }
 
 static int32_t write_all(int fd, const char *buf, size_t n) {
+    if (buf == NULL) {
+        return -1;
+    }
+
+    ssize_t rv;
     while (n > 0) {
-        ssize_t rv = write(fd, buf, n);
+        rv = write(fd, buf, n);
         if (rv <= 0) {
             return -1;  // error
         }
@@ -45,6 +55,7 @@ static int32_t write_all(int fd, const char *buf, size_t n) {
     }
     return 0;
 }
+
 
 const size_t k_max_msg = 4096;
 
