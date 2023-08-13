@@ -152,3 +152,38 @@ int main() {
 
     return 0;
 }
+
+// static void fd_set_nb(int fd) {
+//     errno = 0;
+//     int flags = fcntl(fd, F_GETFL, 0);
+//     if (errno) {
+//         die("fcntl error");
+//         return;
+//     }
+
+//     flags |= O_NONBLOCK;
+
+//     errno = 0;
+//     (void)fcntl(fd, F_SETFL, flags);
+//     if (errno) {
+//         die("fcntl error");
+//     }
+// }
+
+enum {
+    STATE_REQ = 0,
+    STATE_RES = 1,
+    STATE_END = 2,
+};
+
+struct Conn {
+    int fd = -1;
+    uint32_t state = 0 // either STATE_REQ or STATE_RES
+    size_t rbuf_size = 0;
+    uint8_t rbuf[4 + k_max_msg + 1];
+    // buffer for writing
+    size_t wbuf_size = 0;
+    size_t wbuf_sent = 0;
+    uint8_t wbuf[4 + k_max_msg + 1];
+}
+
