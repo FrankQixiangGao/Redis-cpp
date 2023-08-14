@@ -139,6 +139,88 @@ struct Conn {
     uint8_t wbuf[4 + k_max_msg + 1];
 }
 
+static void conn_put(std::vector<Conn *> &fd2conn, struct Conn *conn) {
+    if (fd2conn.size() <= (size_t)conn->fd) {
+        fd2conn.resize(conn->fd + 1);
+    }
+    fd2conn[conn->fd] = conn;
+}
+
+static int32_t accept_new_conn(std::vector<Conn *> &fd2conn, int fd) {
+    //accept
+    struct sockaddr_in client_addr = {};
+    socklen_t socklen = sizeof(client_addr);
+    int connfd  = accept(fd, (struct sockaddr *)&client_addr, &socklen);
+    if (connfd < 0) {
+        die("accept()");
+        return -1; // error
+    }
+    // set the new connection fd to nonblocking mode
+    fd_set_nb(connfd);
+    // creating the struct Conn
+    struct Conn *conn = (struct Conn *)malloc(sizeof(struct Conn));
+    if (!conn) {
+        die("malloc()");
+        return -1; // error
+    }
+    conn->fd = connfd;
+    conn->state = STATE_REQ;
+    conn->rbuf_size = 0;
+    conn->wbuf_size = 0;
+    conn->wbuf_sent = 0;
+    conn_put(fd2conn, conn);
+    return 0;
+}
+
+static void connection_io(Conn *conn) {
+    if (conn->state == STATE_REQ) {
+        state_req(conn);
+    } else if (conn->state == STATE_RES) {
+        state_res(conn);
+    } else {
+        assert(0);  // not expected
+    }
+}
+
+static void state_req(Conn *conn) {
+    while(try_fill_buffer(conn)) {
+    }
+}
+
+static bool try_fill_buffer(Conn *conn) {
+    // try to fill the buffer
+    assert(conn->rbuf_size < sizeof(conn->rbuf));
+    ssize_t rv = 0;
+    do {
+        size_t cap = sizeof(conn->rbuf) - conn->rbuf_size;
+        rv = read(conn->fd, &conn->rbuf[conn->rbuf_size], cap);
+    } while (rv < 0 && errno == EINTR);
+    if (rv < 0 && errno == EAGAIN) {
+        // got EAGAIN, stop.
+        return false;
+    }
+    if (rv < 0) {
+        msg("read() error");
+        conn->state = STATE_END;
+        return false;
+    }
+    if (rv == 0) {
+        if (conn->rbuf_size > 0) {
+            msg("unexpected EOF");
+        } else {
+            msg("EOF");
+        }
+        conn->state = STATE_END;
+        return false;
+    }
+
+    conn->rbuf_size += (size_t)rv;
+    assert(conn->rbuf_size <= sizeof(conn->rbuf));
+
+     while (try_one_request(conn)) {}
+    return (conn->state == STATE_REQ);
+}
+
 int main() {
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -172,7 +254,7 @@ int main() {
         }
 
         //poll for active fds
-        int rv = poll(poll_args.data(), poll_args.size(), 1000);
+        int rv = poll(poll_args.data(), (nfds_t)poll_args.size(), 1000);
         if (rv < 0) {
             die("poll()");
         }
@@ -183,6 +265,8 @@ int main() {
                 Conn *conn = fd2conn[poll_args[i].fd];
                 connection_io(conn);
                 if (conn->state == STATE_END) {
+                    // client closed the connection
+                    // destroy this connection
                     fd2conn[conn->fd] = NULL;
                     (void)close(conn->fd);
                     free(conn);
@@ -195,47 +279,6 @@ int main() {
             (void)accept_new_conn(fd2conn, fd);
         }
     }
-
-
-    // this is needed for most server applications
-    int val = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(val));
-
-    // bind
-    struct sockaddr_in addr = {};
-    addr.sin_family = AF_INET;
-    addr.sin_port = ntohs(1234);
-    addr.sin_addr.s_addr = ntohl(0);    // wildcard address 0.0.0.0
-    int rv = bind(fd, (const sockaddr *)&addr, sizeof(addr));
-    if (rv) {
-        die("bind()");
-    }
-
-    // listen
-    rv = listen(fd, SOMAXCONN);
-    if (rv) {
-        die("listen()");
-    }
-
-    while (true) {
-        // accept
-        struct sockaddr_in client_addr = {};
-        socklen_t socklen = sizeof(client_addr);
-        int connfd = accept(fd, (struct sockaddr *)&client_addr, &socklen);
-        if (connfd < 0) {
-            continue;   // error
-        }
-
-        while (true) {
-            // here the server only serves one client connection at once
-            int32_t err = one_request(connfd);
-            if (err) {
-                break;
-            }
-        }
-        close(connfd);
-    }
-
     return 0;
 }
 
