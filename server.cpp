@@ -217,8 +217,83 @@ static bool try_fill_buffer(Conn *conn) {
     conn->rbuf_size += (size_t)rv;
     assert(conn->rbuf_size <= sizeof(conn->rbuf));
 
-     while (try_one_request(conn)) {}
+    while (try_one_request(conn)) {}
     return (conn->state == STATE_REQ);
+}
+
+def do_something_to_client(fd):
+    if should_read_from(fd):
+        data = read_util_EAGAIN(fd);
+        process_incoming_data(data);
+
+static bool try_one_request(Conn *conn) {
+    if (conn -> rbuf_size < 4) {
+        return false
+    }
+
+
+uint32_t len = 0;
+memcpy(&len, conn->rbuf[0], 4);
+if (len > k_max_msg) {
+    msg("Message length exceeds limit");
+    conn->state = STATE_END;
+    return false;
+}
+if (4 + len > conn->rbuf_size) {
+    // not enough data
+    return false;
+}
+
+// got one request, do something with it
+printf("client says: %s\n", &conn->rbuf[4]);
+
+// generating echoing response
+memcpy(&conn->wbuf[0], &len, 4);
+memcpy(&conn->wbuf[4], &conn->rbuf[4], len);
+conn->wbuf_size = 4 + len;
+
+
+size_t remain = conn->rbuf_size - (4 + len);
+if (remain > 0) {
+    memmove(&conn->rbuf[0], &conn->rbuf[4 + len], remain);
+}
+
+conn->rbuf_size = remain;
+
+conn->state = STATE_RES;
+state_res(conn);
+
+return (conn->state == STATE_RES);
+}
+
+static void state_res(Conn *conn) {
+    while (try_flush_buffer(conn)) {}
+}
+
+static bool try_flush_buffer(Conn *conn) {
+    ssize_t rv = 0;
+    do {
+        size_t remain = conn->wbuf_size - conn->wbuf_sent;
+        rv = write(conn->fd, &conn->wbuf[conn->wbuf_sent], remain);
+    } while (rv < 0 && errno == EINTR);
+    if (rv < 0 && errno == EAGAIN) {
+        // got EAGAIN, stop.
+        return false;
+    }
+    if (rv < 0) {
+        msg("write() error");
+        conn->state = STATE_END;
+        return false;
+    }
+    conn->wbuf_sent += (size_t)rv;
+    assert(conn->wbuf_sent == conn->wbuf_size);
+    if(conn->wbuf_sent == conn->wbuf_size) {
+        conn->state = STATE_REQ;
+        conn->wbuf_size = 0;
+        conn->wbuf_sent = 0;
+        return false;
+    }
+    return true;
 }
 
 int main() {
